@@ -11,6 +11,8 @@ import net.runelite.api.GameState;
 import net.runelite.api.events.GameObjectDespawned;
 import net.runelite.api.events.GameObjectSpawned;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.gameval.ObjectID;
 import net.runelite.client.Notifier;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -18,6 +20,7 @@ import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.util.ColorUtil;
 
 @Slf4j
 @PluginDescriptor(
@@ -25,6 +28,8 @@ import net.runelite.client.plugins.PluginDescriptor;
 )
 public class DaeyaltEssenceMinePlugin extends Plugin
 {
+	private static final int DAEYALT_ESSENCE_MINE_REGION_ID = 14744;
+
 	@Inject
 	private Client client;
 
@@ -36,9 +41,6 @@ public class DaeyaltEssenceMinePlugin extends Plugin
 
 	@Inject
 	private OverlayManager overlayManager;
-
-	private static final int INACTIVE_DAEYALT_ESSENCE_ID = 39094;
-	private static final int ACTIVE_DAEYALT_ESSENCE_ID = 39095;
 
 	@Inject
 	private DaeyaltEssenceMineOverlay mine;
@@ -54,6 +56,8 @@ public class DaeyaltEssenceMinePlugin extends Plugin
 	private Color clickboxFillColorMinable;
 	@Getter
 	private Color clickboxBorderHoverColorMinable;
+
+	private boolean inDaeyaltEssenceMine = false;
 
 	@Override
 	protected void startUp() throws Exception
@@ -73,7 +77,7 @@ public class DaeyaltEssenceMinePlugin extends Plugin
 	private void updateConfig()
 	{
 		clickboxBorderColorMinable = config.showDaeyaltEssenceClickboxAvailable();
-		clickboxFillColorMinable = new Color(clickboxBorderColorMinable.getRed(), clickboxBorderColorMinable.getGreen(), clickboxBorderColorMinable.getBlue(), 50);
+		clickboxFillColorMinable = ColorUtil.colorWithAlpha(clickboxBorderColorMinable, 50);
 		clickboxBorderHoverColorMinable = clickboxBorderColorMinable.darker();
 	}
 
@@ -93,29 +97,32 @@ public class DaeyaltEssenceMinePlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
-		GameState gameState = event.getGameState();
-		if (gameState == GameState.LOADING)
-		{
-			activeDaeyaltEssence = null;
-			activeDaeyaltEssenceSpawnTick = -1;
-		}
+		var gameState = event.getGameState();
+		if (gameState != GameState.LOADING)
+			return;
+
+		activeDaeyaltEssence = null;
+		activeDaeyaltEssenceSpawnTick = -1;
 	}
 
 	@Subscribe
 	public void onGameObjectSpawned(GameObjectSpawned event)
 	{
-		GameObject obj = event.getGameObject();
-		int id = obj.getId();
+		var obj = event.getGameObject();
 
-		switch (id)
+		switch (obj.getId())
 		{
-			case ACTIVE_DAEYALT_ESSENCE_ID:
-				if (activeDaeyaltEssenceSpawnTick >= 0)
+			case ObjectID.DAEYALT_STONE_TOP_ACTIVE:
+				if (obj == activeDaeyaltEssence)
+					return;
+
+				if (activeDaeyaltEssenceSpawnTick > 0)
 					notifier.notify(config.notification(), "Daeyalt Essence Mine spawned");
+
 				activeDaeyaltEssenceSpawnTick = client.getTickCount();
 				activeDaeyaltEssence = obj;
 				break;
-			case INACTIVE_DAEYALT_ESSENCE_ID:
+			case ObjectID.DAEYALT_STONE_TOP:
 
 				break;
 		}
@@ -124,14 +131,46 @@ public class DaeyaltEssenceMinePlugin extends Plugin
 	@Subscribe
 	public void onGameObjectDespawned(GameObjectDespawned event)
 	{
-		GameObject object = event.getGameObject();
-		if (object.getId() == ACTIVE_DAEYALT_ESSENCE_ID && object == activeDaeyaltEssence)
+		var object = event.getGameObject();
+		if (object.getId() == ObjectID.DAEYALT_STONE_TOP_ACTIVE && object == activeDaeyaltEssence)
 			activeDaeyaltEssence = null;
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick event)
+	{
+		var player = client.getLocalPlayer();
+		if (player == null)
+		{
+			inDaeyaltEssenceMine = false;
+			return;
+		}
+
+		var worldLocation = player.getWorldLocation();
+		if (worldLocation == null)
+		{
+			inDaeyaltEssenceMine = false;
+			return;
+		}
+
+		var region = worldLocation.getRegionID();
+		inDaeyaltEssenceMine = region == DAEYALT_ESSENCE_MINE_REGION_ID;
+
+		if (!inDaeyaltEssenceMine)
+		{
+			activeDaeyaltEssence = null;
+			activeDaeyaltEssenceSpawnTick = -1;
+		}
 	}
 
 	@Provides
 	DaeyaltEssenceMineConfig provideConfig(ConfigManager configManager)
 	{
 		return configManager.getConfig(DaeyaltEssenceMineConfig.class);
+	}
+
+	public boolean outsideDaeyaltEssenceMine()
+	{
+		return !inDaeyaltEssenceMine;
 	}
 }
